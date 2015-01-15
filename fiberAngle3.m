@@ -16,6 +16,10 @@ opt.saveeig = false;
 opt.debug = false;
 opt = parsevarargin(opt,varargin,3);
 
+debug = opt.debug;
+issavecorr = opt.savecorr;
+issaveeig = opt.saveeig;
+
 info = h5info(h5imagefile,'/Image');
 sz = info.Dataspace.Size;
 
@@ -151,18 +155,18 @@ h5opencreate(h5outfile,'/Grid/Z', size(ctrz));
 h5write(h5outfile,'/Grid/Z', ctrz);
 h5writeatt(h5outfile,'/Grid','CorrelationVolume',vgrid(1:3));
 
-timedWaitBar(0, 'Fiber angles...');
 a = 1;
 N = length(ictr1)*length(ictr2)*length(ictr3);
-for i = 1:length(ictr1),
-    for j = 1:length(ictr2),
-        for k = 1:length(ictr3),
+progress(a,N, 'Computing fiber angles');
+for k = 1:length(ictr3),
+    for i = 1:length(ictr1),
+        for j = 1:length(ictr2),
             V1 = h5read(h5imagefile,'/Image',[ictr1(i)-irgnctr(1) ictr2(j)-irgnctr(2) ictr3(k)-irgnctr(3)], ...
                 nrgn);
             V1 = double(V1) / imagemax;
             
             %check to make sure that there's a signal in this region
-            if (~opt.debug && (rms(V1(:)) > 0.05))
+            if (~debug && (rms(V1(:)) > 0.05))
                 %apply the window
                 V1 = V1.*wind;
 
@@ -181,24 +185,24 @@ for i = 1:length(ictr1),
                 
                 %run through them all and display the x,y components of the
                 %smallest eigenvectors
-                hu = zeros(length(rgnx),length(rgny)); 
-                hv = zeros(length(rgnx),length(rgny));
-                ed = zeros(length(rgnx),length(rgny));
-                for h1 = 1:length(rgny),
-                    for h2 = 1:length(rgnx),
-                        h3 = ceil(size(H,5)/2);
-                        if (all(isfinite(flatten(H(:,:,h1,h2,h3))))),
-                            %and take the eigenvalues
-                            [ev,ed1] = eig(H(:,:,h1,h2,h3));
-                            %minimum eigenvalue corresponds to the axis of least
-                            %curvature
-                            [ed(h1,h2),ind] = min(abs(diag(ed1)));
-
-                            hu(h1,h2) = ev(1,ind);
-                            hv(h1,h2) = ev(2,ind);
-                        end;
-                    end;
-                end;
+%                 hu = zeros(length(rgnx),length(rgny)); 
+%                 hv = zeros(length(rgnx),length(rgny));
+%                 ed = zeros(length(rgnx),length(rgny));
+%                 for h1 = 1:length(rgny),
+%                     for h2 = 1:length(rgnx),
+%                         h3 = ceil(size(H,5)/2);
+%                         if (all(isfinite(flatten(H(:,:,h1,h2,h3))))),
+%                             %and take the eigenvalues
+%                             [ev,ed1] = eig(H(:,:,h1,h2,h3));
+%                             %minimum eigenvalue corresponds to the axis of least
+%                             %curvature
+%                             [ed(h1,h2),ind] = min(abs(diag(ed1)));
+% 
+%                             hu(h1,h2) = ev(1,ind);
+%                             hv(h1,h2) = ev(2,ind);
+%                         end;
+%                     end;
+%                 end;
                         
                     
                 H = H(:,:,hctr,hctr,hctr);
@@ -208,26 +212,24 @@ for i = 1:length(ictr1),
                 ed = diag(ed);
                 %minimum eigenvalue corresponds to the axis of least
                 %curvature
-                [m,ind] = min(abs(ed));
+                [~,ind] = min(abs(ed));
 
                 %save correlation matrix and/or eigenvalues
-                if (opt.savecorr),
+                if (savecorr),
                     h5write(h5outfile,'/Correlations',C,[1 1 1 j i k],...
                         [size(C) 1 1 1]);
                     h5write(h5outfile,'/Hessians',H,[1 1 j i k],...
                         [size(H) 1 1 1]);
                 end;
-                if (opt.saveeig),
+                if (saveeig),
                     h5write(h5outfile,'/Eigenvalues',ed([ind 1:ind-1 ind+1:end]),[1 j i k],...
                         [3 1 1 1]);
                 end
                 h5write(h5outfile,'/Eigenvectors',ev(:,[ind 1:ind-1 ind+1:end]),[1 1 j i k],...
                     [3 3 1 1 1]);
             end;
-            if (~timedWaitBar(a/N)),
-                return;
-            end;
             a = a+1;
+            progress(a,N);
         end;
     end;
 end;
