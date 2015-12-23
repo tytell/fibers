@@ -14,6 +14,7 @@ function fiberAngle3(h5imagefile,h5outfile, igrid, varargin)
 opt.savecorr = false;
 opt.saveeig = false;
 opt.debug = false;
+opt.method = 'hough';
 opt = parsevarargin(opt,varargin,3);
 
 debug = opt.debug;
@@ -146,7 +147,7 @@ if (opt.saveeig)
 end    
 h5opencreate(h5outfile,'/Eigenvectors',[3 3 ...
     length(ictr1) length(ictr2) length(ictr3)], ...
-    'ChunkSize',[3 3 1 1 1]);
+    'ChunkSize',[3 1 1 1 1]);
 h5opencreate(h5outfile,'/Grid/X', size(ctrx));
 h5write(h5outfile,'/Grid/X', ctrx);
 h5opencreate(h5outfile,'/Grid/Y', size(ctry));
@@ -154,6 +155,14 @@ h5write(h5outfile,'/Grid/Y', ctry);
 h5opencreate(h5outfile,'/Grid/Z', size(ctrz));
 h5write(h5outfile,'/Grid/Z', ctrz);
 h5writeatt(h5outfile,'/Grid','CorrelationVolume',vgrid(1:3));
+
+if strcmp(opt.method,'hough')
+    [xvote,yvote,zvote] = ndgrid(irgn1,irgn2,irgn3);
+    mag = sqrt(xvote.^2 + yvote.^2 + zvote.^2);
+    xvote = xvote ./ mag;
+    yvote = yvote ./ mag;
+    zvote = zvote ./ mag;
+end
 
 a = 1;
 N = length(ictr1)*length(ictr2)*length(ictr3);
@@ -180,40 +189,52 @@ for k = 1:length(ictr3),
                 C = fftshift(C);
                 C = real(C);            % just take the real part
 
-                %get the hessian at the center of the correlation matrix
-                H = hessian3(rgnx,rgny, rgnz, C, 'difference'); %,difford,diff1,diff2);
-                
-                %run through them all and display the x,y components of the
-                %smallest eigenvectors
-%                 hu = zeros(length(rgnx),length(rgny)); 
-%                 hv = zeros(length(rgnx),length(rgny));
-%                 ed = zeros(length(rgnx),length(rgny));
-%                 for h1 = 1:length(rgny),
-%                     for h2 = 1:length(rgnx),
-%                         h3 = ceil(size(H,5)/2);
-%                         if (all(isfinite(flatten(H(:,:,h1,h2,h3))))),
-%                             %and take the eigenvalues
-%                             [ev,ed1] = eig(H(:,:,h1,h2,h3));
-%                             %minimum eigenvalue corresponds to the axis of least
-%                             %curvature
-%                             [ed(h1,h2),ind] = min(abs(diag(ed1)));
-% 
-%                             hu(h1,h2) = ev(1,ind);
-%                             hv(h1,h2) = ev(2,ind);
-%                         end;
-%                     end;
-%                 end;
-                        
+                if strcmp(opt.method,'hough')
+                    C = C / sum(C(:));
+                    x1 = sum(xvote(:).*C(:));
+                    y1 = sum(yvote(:).*C(:));
+                    z1 = sum(zvote(:).*C(:));
                     
-                H = H(:,:,hctr,hctr,hctr);
-
-                %and take the eigenvalues
-                [ev,ed] = eig(H);
-                ed = diag(ed);
-                %minimum eigenvalue corresponds to the axis of least
-                %curvature
-                [~,ind] = min(abs(ed));
-
+                    % CONTINUE - check significance of (x1,y1,z1) vector
+                    % then project onto plane perpendicular to vector and
+                    % get mean vector
+                else
+                    
+                    %get the hessian at the center of the correlation matrix
+                    H = hessian3(rgnx,rgny, rgnz, C, 'difference'); %,difford,diff1,diff2);
+                    
+                    %run through them all and display the x,y components of the
+                    %smallest eigenvectors
+                    %                 hu = zeros(length(rgnx),length(rgny));
+                    %                 hv = zeros(length(rgnx),length(rgny));
+                    %                 ed = zeros(length(rgnx),length(rgny));
+                    %                 for h1 = 1:length(rgny),
+                    %                     for h2 = 1:length(rgnx),
+                    %                         h3 = ceil(size(H,5)/2);
+                    %                         if (all(isfinite(flatten(H(:,:,h1,h2,h3))))),
+                    %                             %and take the eigenvalues
+                    %                             [ev,ed1] = eig(H(:,:,h1,h2,h3));
+                    %                             %minimum eigenvalue corresponds to the axis of least
+                    %                             %curvature
+                    %                             [ed(h1,h2),ind] = min(abs(diag(ed1)));
+                    %
+                    %                             hu(h1,h2) = ev(1,ind);
+                    %                             hv(h1,h2) = ev(2,ind);
+                    %                         end;
+                    %                     end;
+                    %                 end;
+                    
+                    
+                    H = H(:,:,hctr,hctr,hctr);
+                    
+                    %and take the eigenvalues
+                    [ev,ed] = eig(H);
+                    ed = diag(ed);
+                    %minimum eigenvalue corresponds to the axis of least
+                    %curvature
+                    [~,ind] = min(abs(ed));
+                end
+                
                 %save correlation matrix and/or eigenvalues
                 if (savecorr),
                     h5write(h5outfile,'/Correlations',C,[1 1 1 j i k],...
