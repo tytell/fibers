@@ -1,14 +1,64 @@
 import numpy as np
 from scipy import signal, linalg, argsort
+import logging
 
 
-def ndautocorr(V, insz, window=None, beta=1, normalize=True):
+def ndautocorr(V, window=None, normalize=True, **kwargs):
+    """
+    Autocorrelation of a volume V
+
+    :param V: Volume
+    :param window: ndarray of window values (not the window function)
+    :param normalize: If True, normalizes the volume before the autocorrelation
+    :return: Returns the autocorrelation matrix
+    """
+
+    if normalize:
+        V = (V-np.mean(V))/np.std(V)
+
+    if window is not None:
+        if window.shape == V.shape:
+            V = V*window
+        else:
+            raise ValueError('Window size mismatch')
+
+    # get the autocorrelation volume
+    F1 = np.fft.fftn(V)
+    C = np.fft.ifftn(F1 * np.conjugate(F1))
+    C = np.fft.fftshift(C)
+    C = np.real(C)
+
+    return C
+
+
+def make_window_vals(V, window='hamming', beta=1):
+    if window == 'hamming':
+        windowfcn = np.hamming
+    elif window == 'kaiser':
+        windowfcn = lambda x: np.kaiser(x,beta=beta)
+    else:
+        raise ValueError('Unrecognized window function')
+
+    W = np.ones((V.shape[0],))
+    for dim1,outsz1 in enumerate(V.shape):
+        # make the window on one axis
+        w1 = windowfcn(outsz1)
+        # set up a slice to broadcast along the current dimension
+        ss = [np.newaxis for i in V.shape]
+        ss[dim1] = slice(None)
+        # and multiply to build up the ND window
+        W = W * w1[ss]
+
+    return W
+
+
+def scipyautocorr(V, insz=None, window=None, normalize=True, **kwargs):
     """
     Autocorrelation of a volume V with a smaller subvolume of itself
 
     :param V: Volume
     :param insz: Size of the smaller region.  Will be centered
-    :param window: None, 'hamming', or 'kaiser'
+    :param window: None or ndarray of window values
     :param beta: Kaiser beta parameter
     :param normalize: If True, normalizes the volume by subtracting the mean and dividing by the standard deviation.
     :return: Returns the autocorrelation matrix
@@ -19,24 +69,10 @@ def ndautocorr(V, insz, window=None, beta=1, normalize=True):
         V = (V-np.mean(V))/np.std(V)
 
     if window is not None:
-        if window == 'hamming':
-            windowfcn = np.hamming
-        elif window == 'kaiser':
-            windowfcn = lambda x: np.kaiser(x,beta=beta)
+        if window.shape == V.shape:
+            V = V*window
         else:
-            raise ValueError('Unrecognized window function')
-
-        W = np.ones((outsz[0]))
-        for dim1,outsz1 in enumerate(outsz):
-            # make the window on one axis
-            w1 = windowfcn(outsz1)
-            # set up a slice to broadcast along the current dimension
-            ss = [np.newaxis for i in outsz]
-            ss[dim1] = slice(None)
-            # and multiply to build up the ND window
-            W = W * w1[ss]
-
-        V = V*W
+            raise ValueError('Window size mismatch')
 
     inrng = [slice(out1//2-in1//2, out1//2-in1//2 + in1)
             for (in1,out1) in zip(insz,outsz)]
@@ -100,7 +136,7 @@ def hessian(C, ctr=None, di=1):
     return H
 
 
-def fiber_angle(V, insz, returncorr=False, **kw):
+def fiber_angle(V, autocorrfcn=ndautocorr, insz=None, returncorr=False, **kw):
     """
     Estimate the angle of fibers through a volume.
     First takes the autocorrelation of the volume, then takes the eigenvalues and eigenvectors of the Hessian
@@ -117,8 +153,11 @@ def fiber_angle(V, insz, returncorr=False, **kw):
     """
 
     # get the autocorrelation
-    C = ndautocorr(V, insz, **kw)
-    ctr = (np.array(V.shape) - np.array(insz)+1)//2
+    C = autocorrfcn(V, insz=insz, **kw)
+    if insz is not None:
+        ctr = (np.array(V.shape) - np.array(insz)+1)//2
+    else:
+        ctr = np.array(V.shape)//2
 
     # and the hessian in the center
     H = hessian(C, ctr=ctr)
