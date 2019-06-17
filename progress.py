@@ -30,7 +30,7 @@ def query_yes_no(question, default="yes"):
         raise ValueError("invalid default answer: '%s'" % default)
 
     while True:
-        choice = raw_input(question + prompt).lower()
+        choice = input(question + prompt).lower()
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -142,8 +142,7 @@ class ProgressBar:
             clear_output()
         except Exception:
             pass
-        print '\r', self.get_meter(),
-        sys.stdout.flush()
+        print('\r', self.get_meter(), sys.stdout.flush())
 
         # Timestamp
         self.last_refresh = time.time()
