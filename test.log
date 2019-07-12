@@ -1,0 +1,5 @@
+2015-07-23 13:03:37,496 - root - DEBUG - From main thread
+2015-07-23 13:08:31,502 - 81415 - root - DEBUG - From thread 81415
+2015-07-23 13:08:31,502 - 81420 - root - DEBUG - From thread 81420
+2015-07-23 13:08:31,503 - 81421 - root - DEBUG - From thread 81421
+2015-07-23 13:08:31,503 - 81424 - root - DEBUG - From thread 81424

@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>
+<Xdmf Version="2.0">
+<DataItem ItemType="Uniform"
+  Format="HDF"
+  NumberType="UInt" Precision="2"
+  Dimensions="690 1235 2237">
+  Drerio4.h5:/image
+</DataItem>
+</Xdmf>
