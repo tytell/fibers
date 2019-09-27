@@ -142,8 +142,9 @@ class ProgressBar:
             clear_output()
         except Exception:
             pass
-        print('\r', self.get_meter(), sys.stdout.flush())
-
+        print('\r', self.get_meter())
+        sys.stdout.flush()
+        
         # Timestamp
         self.last_refresh = time.time()
         
