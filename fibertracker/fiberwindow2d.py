@@ -12,7 +12,7 @@ SETTINGS_FILE = "fibertracker.ini"
 pg.setConfigOption('background', 'w')
 pg.setConfigOption('foreground', 'k')
 
-class ImageROI(pg.ImageItem):
+class ImageClick(pg.ImageItem):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -25,6 +25,47 @@ class ImageROI(pg.ImageItem):
         logging.debug("Mousce click: {}, double {}".format(ev, ev.double()))
         if ev.double():
             self.sigDoubleClick.emit(ev)
+
+class CircleROIwLine(pg.CircleROI):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if "angle" in kwargs:
+            self._lineAngle = np.deg2rad(kwargs["angle"])
+        else:
+            self._lineAngle = 0.0
+
+        pos = self.pos()
+        r = self.size()[0]/2
+        ctrx = pos[0] + r
+        ctry = pos[1] + r
+
+        self._dx = r * np.cos(self._lineAngle)
+        self._dy = r * np.sin(self._lineAngle)
+
+        self.line = pg.PlotDataItem(x=[ctrx-self._dx, ctrx+self._dx], y=[ctry-self._dy, ctry+self._dy], color='g')
+
+        self.sigRegionChanged.connect(self._updateLine)
+
+    def setLineAngle(self, angle):
+        self._lineAngle = np.deg2rad(angle)
+        self._updateLine(self)
+
+    def addToPlot(self, plot):
+        plot.addItem(self)
+        plot.addItem(self.line)
+
+    def _updateLine(self, circ):
+        pos = self.pos()
+        r = self.size()[0]/2
+        ctrx = pos[0] + r
+        ctry = pos[1] + r
+
+        self._dx = r * np.cos(self._lineAngle)
+        self._dy = r * np.sin(self._lineAngle)
+
+        self.line.setData(x=[ctrx-self._dx, ctrx+self._dx], y=[ctry-self._dy, ctry+self._dy])
+
 
 class FiberWindow2d(QtWidgets.QWidget):
     def __init__(self, datafile, axis='yz'):
@@ -61,6 +102,9 @@ class FiberWindow2d(QtWidgets.QWidget):
 
         self.curFrame = int(self.len/2)
 
+        self.activeROI = None
+        self.activeLine = None
+
         self.initUI()
         self.readSettings()
 
@@ -90,7 +134,7 @@ class FiberWindow2d(QtWidgets.QWidget):
         hlayout1.addWidget(self.doneButton)
 
         self.plot = pg.PlotWidget()
-        self.image = ImageROI(image=self.getImage())
+        self.image = ImageClick(image=self.getImage())
         self.image.sigDoubleClick.connect(self.doubleClick)
 
         self.plot.addItem(self.image)
@@ -127,6 +171,16 @@ class FiberWindow2d(QtWidgets.QWidget):
         self.radonImg = pg.ImageItem()
         self.radonPlot.addItem(self.radonImg)
 
+        self.anglePlot = self.radonPlot.plot(x=[], y=[], z=10, pen='r')
+
+        ctr = QtCore.QPointF(32.0, 32.0)
+        self.angleMark = [pg.InfiniteLine(pos=0, angle=90, pen='g'),
+                          pg.InfiniteLine(pos=ctr, angle=0, pen='g')]
+        self.radonPlot.addItem(self.angleMark[0])
+        self.zoomPlot.addItem(self.angleMark[1])
+        self.angleMark[0].setVisible(False)
+        self.angleMark[1].setVisible(False)
+
         hlayout2 = QtWidgets.QHBoxLayout()
         hlayout2.addWidget(self.zoomPlot)
         hlayout2.addWidget(self.radonPlot)
@@ -152,19 +206,19 @@ class FiberWindow2d(QtWidgets.QWidget):
         logging.debug('Click: {}, double {}'.format(ev, ev.double()))
         ev.accept()
 
-        sz = np.array([64, 64])
+        r = 32.0
         ctr = np.array(ev.pos())
-        pos = ctr - sz/2
+        pos = ctr - [r, r]
 
-        roi1 = pg.RectROI(pos=pos, size=sz, centered=True,
-                          removable=True)
+        roi1 = CircleROIwLine(pos=pos, size=[2*r, 2*r], removable=True)
 
-        roi1.addRotateHandle([1, 0], [0.5, 0.5])
         roi1.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
 
         roi1.sigClicked.connect(self.roiClicked)
+        roi1.sigRegionChangeFinished.connect(self.updateZoomImage)
 
-        self.plot.addItem(roi1)
+        roi1.addToPlot(self.plot)
+
         roi1.setZValue(10)      # make sure it's above the image
         self.updateZoomImage(roi1)
 
@@ -173,18 +227,17 @@ class FiberWindow2d(QtWidgets.QWidget):
     def roiClicked(self, roi):
         logging.debug("ROI: {}".format(roi))
 
-        roi.sigRegionChangeFinished.connect(self.updateZoomImage)
-
         self.updateZoomImage(roi)
 
     def updateZoomImage(self, roi):
         roiImg = roi.getArrayRegion(self.getImage(), self.image)
 
-        radius = min(roiImg.shape) // 2
+        radius = roi.size()[0] / 2
         c0, c1 = np.ogrid[0:roiImg.shape[0], 0:roiImg.shape[1]]
         reconstruction_circle = ((c0 - roiImg.shape[0] // 2) ** 2
                                  + (c1 - roiImg.shape[1] // 2) ** 2)
-        outside = reconstruction_circle >= radius ** 2
+
+        outside = np.logical_and(roiImg == 0, reconstruction_circle >= (radius-1) ** 2)
         inside = np.logical_not(outside)
 
         roiImg -= np.mean(roiImg[inside])
@@ -206,14 +259,20 @@ class FiberWindow2d(QtWidgets.QWidget):
         self.radonImg.setImage(sinogram.T)
         self.radonImg.setRect(QtCore.QRectF(0, 0, 180, roiImg.shape[1]))
 
-        self.radonPlot.plot(x=theta, y=angleintensity * sinogram.shape[1], z=10, pen='r')
+        self.anglePlot.setData(x=theta, y=angleintensity * sinogram.shape[1])
 
         angle = theta[np.argmax(angleintensity)]
 
-        self.radonPlot.addItem(pg.InfiniteLine(pos=angle, angle=90, pen='g'))
+        roi.setLineAngle(angle)
+
+        self.angleMark[0].setPos(angle)
 
         ctr = QtCore.QPointF(roiImg.shape[0]/2.0, roiImg.shape[1]/2.0)
-        self.zoomPlot.addItem(pg.InfiniteLine(pos=ctr, angle=angle, pen='g'))
+        self.angleMark[1].setPos(ctr)
+        self.angleMark[1].setAngle(angle)
+
+        self.angleMark[0].setVisible(True)
+        self.angleMark[1].setVisible(True)
 
         self.zoomWnd.show()
 
