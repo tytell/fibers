@@ -26,9 +26,12 @@ class ImageClick(pg.ImageItem):
         if ev.double():
             self.sigDoubleClick.emit(ev)
 
+
 class CircleROIwLine(pg.CircleROI):
-    def __init__(self, **kwargs):
+    def __init__(self, radonWnd=None, **kwargs):
         super().__init__(**kwargs)
+
+        self.radonWnd = radonWnd
 
         if "angle" in kwargs:
             self._lineAngle = np.deg2rad(kwargs["angle"])
@@ -45,7 +48,11 @@ class CircleROIwLine(pg.CircleROI):
 
         self.line = pg.PlotDataItem(x=[ctrx-self._dx, ctrx+self._dx], y=[ctry-self._dy, ctry+self._dy], color='g')
 
+        self.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
+
         self.sigRegionChanged.connect(self._updateLine)
+        self.sigRegionChangeFinished.connect(self.updateRadon)
+        self.sigClicked.connect(self.updateRadon)
 
     def setLineAngle(self, angle):
         self._lineAngle = np.deg2rad(angle)
@@ -65,6 +72,133 @@ class CircleROIwLine(pg.CircleROI):
         self._dy = r * np.sin(self._lineAngle)
 
         self.line.setData(x=[ctrx-self._dx, ctrx+self._dx], y=[ctry-self._dy, ctry+self._dy])
+
+    def updateRadon(self):
+        if self.radonWnd is not None:
+            self.radonWnd.updateROI(self)
+
+
+class RadonWindow(QtWidgets.QWidget):
+    def __init__(self, imageData, imageItem):
+        super().__init__()
+
+        self.curROI = None
+        self.imageData = imageData
+        self.imageItem = imageItem
+
+        self.initUI()
+        self.readSettings()
+
+    def initUI(self):
+        self.setWindowTitle("Radon")
+
+        self.zoomPlot = pg.PlotWidget()
+        self.zoomImg = pg.ImageItem()
+        self.zoomPlot.addItem(self.zoomImg)
+
+        self.zoomPlot.setAspectLocked()
+
+        self.radonPlot = pg.PlotWidget()
+        self.radonImg = pg.ImageItem()
+        self.radonPlot.addItem(self.radonImg)
+
+        self.anglePlot = self.radonPlot.plot(x=[], y=[], z=10, pen='r')
+
+        ctr = QtCore.QPointF(32.0, 32.0)
+        self.angleMark = [pg.InfiniteLine(pos=0, angle=90, pen='g'),
+                          pg.InfiniteLine(pos=ctr, angle=0, pen='g')]
+        self.radonPlot.addItem(self.angleMark[0])
+        self.zoomPlot.addItem(self.angleMark[1])
+        self.angleMark[0].setVisible(False)
+        self.angleMark[1].setVisible(False)
+
+        hlayout = QtWidgets.QHBoxLayout()
+        hlayout.addWidget(self.zoomPlot)
+        hlayout.addWidget(self.radonPlot)
+
+        self.setLayout(hlayout)
+
+    def updateROI(self, roi):
+        self.curROI = roi
+        self.updateRadon()
+
+    def updateImage(self, imageData):
+        self.imageData = imageData
+        self.updateRadon()
+
+    def updateRadon(self):
+        roi = self.curROI
+
+        if roi is None:
+            return
+
+        roiImg = roi.getArrayRegion(self.imageData, self.imageItem)
+
+        radius = roi.size()[0] / 2
+        c0, c1 = np.ogrid[0:roiImg.shape[0], 0:roiImg.shape[1]]
+        reconstruction_circle = ((c0 - roiImg.shape[0] // 2) ** 2
+                                 + (c1 - roiImg.shape[1] // 2) ** 2)
+
+        outside = np.logical_and(roiImg == 0, reconstruction_circle >= (radius-1) ** 2)
+        inside = np.logical_not(outside)
+
+        roiImg -= np.mean(roiImg[inside])
+        roiImg[outside] = 0.0
+
+        roiImg /= np.max(roiImg) - np.min(roiImg)
+
+        self.zoomImg.setImage(roiImg, autoLevels=True)
+
+        theta = np.linspace(0, 180, max(roiImg.shape), endpoint=False)
+        sinogram = skimage.transform.radon(roiImg, theta, circle=True)
+
+        # if there were no lines, any point on the sinogram would be equal to diameter of the reconstruction circle
+        # times the mean intensity
+
+        angleintensity = np.sum(np.abs(sinogram), axis=0)
+        angleintensity /= np.max(angleintensity)
+
+        self.radonImg.setImage(sinogram.T)
+        self.radonImg.setRect(QtCore.QRectF(0, 0, 180, roiImg.shape[1]))
+
+        self.anglePlot.setData(x=theta, y=angleintensity * sinogram.shape[1])
+
+        angle = theta[np.argmax(angleintensity)]
+
+        roi.setLineAngle(angle)
+
+        self.angleMark[0].setPos(angle)
+
+        ctr = QtCore.QPointF(roiImg.shape[0]/2.0, roiImg.shape[1]/2.0)
+        self.angleMark[1].setPos(ctr)
+        self.angleMark[1].setAngle(angle)
+
+        self.angleMark[0].setVisible(True)
+        self.angleMark[1].setVisible(True)
+
+        self.show()
+
+    def readSettings(self):
+        settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
+
+        settings.beginGroup("ZoomWindow")
+
+        self.resize(settings.value("size", QtCore.QSize(200, 200)))
+        self.move(settings.value("position", QtCore.QPoint(1000, 200)))
+
+        settings.endGroup()
+
+    def writeSettings(self):
+        settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
+
+        settings.beginGroup("ZoomWindow")
+        settings.setValue("size", self.size())
+        settings.setValue("position", self.pos())
+        settings.endGroup()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self.writeSettings()
+        event.accept()
 
 
 class FiberWindow2d(QtWidgets.QWidget):
@@ -157,36 +291,7 @@ class FiberWindow2d(QtWidgets.QWidget):
 
         self.doneButton.clicked.connect(self.close)
 
-        # set up extra window for showing zoomed in ROIs and radon results
-        self.zoomWnd = QtWidgets.QWidget()
-        self.zoomWnd.setWindowTitle("Radon")
-
-        self.zoomPlot = pg.PlotWidget()
-        self.zoomImg = pg.ImageItem()
-        self.zoomPlot.addItem(self.zoomImg)
-
-        self.zoomPlot.setAspectLocked()
-
-        self.radonPlot = pg.PlotWidget()
-        self.radonImg = pg.ImageItem()
-        self.radonPlot.addItem(self.radonImg)
-
-        self.anglePlot = self.radonPlot.plot(x=[], y=[], z=10, pen='r')
-
-        ctr = QtCore.QPointF(32.0, 32.0)
-        self.angleMark = [pg.InfiniteLine(pos=0, angle=90, pen='g'),
-                          pg.InfiniteLine(pos=ctr, angle=0, pen='g')]
-        self.radonPlot.addItem(self.angleMark[0])
-        self.zoomPlot.addItem(self.angleMark[1])
-        self.angleMark[0].setVisible(False)
-        self.angleMark[1].setVisible(False)
-
-        hlayout2 = QtWidgets.QHBoxLayout()
-        hlayout2.addWidget(self.zoomPlot)
-        hlayout2.addWidget(self.radonPlot)
-
-        self.zoomWnd.setLayout(hlayout2)
-        self.zoomWnd.show()
+        self.radonWnd = RadonWindow(self.getImage(), self.image)
 
     def getImage(self):
         ind = [slice(None), slice(None), slice(None)]
@@ -201,6 +306,7 @@ class FiberWindow2d(QtWidgets.QWidget):
 
     def updateImage(self):
         self.image.setImage(self.getImage())
+        self.radonWnd.updateImage(self.getImage())
 
     def doubleClick(self, ev):
         logging.debug('Click: {}, double {}'.format(ev, ev.double()))
@@ -210,71 +316,20 @@ class FiberWindow2d(QtWidgets.QWidget):
         ctr = np.array(ev.pos())
         pos = ctr - [r, r]
 
-        roi1 = CircleROIwLine(pos=pos, size=[2*r, 2*r], removable=True)
-
-        roi1.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
-
-        roi1.sigClicked.connect(self.roiClicked)
-        roi1.sigRegionChangeFinished.connect(self.updateZoomImage)
+        roi1 = CircleROIwLine(radonWnd=self.radonWnd,
+                              pos=pos, size=[2*r, 2*r], removable=True)
 
         roi1.addToPlot(self.plot)
 
         roi1.setZValue(10)      # make sure it's above the image
-        self.updateZoomImage(roi1)
+        self.radonWnd.updateROI(roi1)
 
         self.ROIs.append(roi1)
 
     def roiClicked(self, roi):
         logging.debug("ROI: {}".format(roi))
 
-        self.updateZoomImage(roi)
-
-    def updateZoomImage(self, roi):
-        roiImg = roi.getArrayRegion(self.getImage(), self.image)
-
-        radius = roi.size()[0] / 2
-        c0, c1 = np.ogrid[0:roiImg.shape[0], 0:roiImg.shape[1]]
-        reconstruction_circle = ((c0 - roiImg.shape[0] // 2) ** 2
-                                 + (c1 - roiImg.shape[1] // 2) ** 2)
-
-        outside = np.logical_and(roiImg == 0, reconstruction_circle >= (radius-1) ** 2)
-        inside = np.logical_not(outside)
-
-        roiImg -= np.mean(roiImg[inside])
-        roiImg[outside] = 0.0
-
-        roiImg /= np.max(roiImg) - np.min(roiImg)
-
-        self.zoomImg.setImage(roiImg, autoLevels=True)
-
-        theta = np.linspace(0, 180, max(roiImg.shape), endpoint=False)
-        sinogram = skimage.transform.radon(roiImg, theta, circle=True)
-
-        # if there were no lines, any point on the sinogram would be equal to diameter of the reconstruction circle
-        # times the mean intensity
-
-        angleintensity = np.sum(np.abs(sinogram), axis=0)
-        angleintensity /= np.max(angleintensity)
-
-        self.radonImg.setImage(sinogram.T)
-        self.radonImg.setRect(QtCore.QRectF(0, 0, 180, roiImg.shape[1]))
-
-        self.anglePlot.setData(x=theta, y=angleintensity * sinogram.shape[1])
-
-        angle = theta[np.argmax(angleintensity)]
-
-        roi.setLineAngle(angle)
-
-        self.angleMark[0].setPos(angle)
-
-        ctr = QtCore.QPointF(roiImg.shape[0]/2.0, roiImg.shape[1]/2.0)
-        self.angleMark[1].setPos(ctr)
-        self.angleMark[1].setAngle(angle)
-
-        self.angleMark[0].setVisible(True)
-        self.angleMark[1].setVisible(True)
-
-        self.zoomWnd.show()
+        self.radonWnd.updateROI(roi)
 
     def readSettings(self):
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
@@ -286,13 +341,6 @@ class FiberWindow2d(QtWidgets.QWidget):
 
         settings.endGroup()
 
-        settings.beginGroup("ZoomWindow")
-
-        self.zoomWnd.resize(settings.value("size", QtCore.QSize(200, 200)))
-        self.zoomWnd.move(settings.value("position", QtCore.QPoint(1000, 200)))
-
-        settings.endGroup()
-
     def writeSettings(self):
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
 
@@ -301,15 +349,10 @@ class FiberWindow2d(QtWidgets.QWidget):
         settings.setValue("position", self.pos())
         settings.endGroup()
 
-        settings.beginGroup("ZoomWindow")
-        settings.setValue("size", self.zoomWnd.size())
-        settings.setValue("position", self.zoomWnd.pos())
-        settings.endGroup()
-
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.writeSettings()
 
-        self.zoomWnd.close()
+        self.radonWnd.close()
 
         event.accept()
 
