@@ -6,6 +6,7 @@ import h5py
 import skimage.transform
 from copy import copy
 import pyqtgraph as pg
+import csv
 
 SETTINGS_FILE = "fibertracker.ini"
 
@@ -22,7 +23,7 @@ class ImageClick(pg.ImageItem):
         ev.acceptClicks(button=0)
 
     def mouseClickEvent(self, ev):
-        logging.debug("Mousce click: {}, double {}".format(ev, ev.double()))
+        # logging.debug("Mouse click: {}, double {}".format(ev, ev.double()))
         if ev.double():
             self.sigDoubleClick.emit(ev)
 
@@ -143,7 +144,7 @@ class RadonWindow(QtWidgets.QWidget):
         inside = np.logical_not(outside)
 
         roiImg -= np.mean(roiImg[inside])
-        roiImg[outside] = 0.0
+        roiImg[outside] = 0.0 ## check
 
         roiImg /= np.max(roiImg) - np.min(roiImg)
 
@@ -252,6 +253,7 @@ class FiberWindow2d(QtWidgets.QWidget):
                                                            QtWidgets.QSizePolicy.Fixed))
 
         self.doneButton = QtWidgets.QPushButton("Done")
+        self.saveButton = QtWidgets.QPushButton("Save") # creating saveButton widget
 
         self.frameNumberBox = QtWidgets.QSpinBox()
         self.frameNumberBox.setRange(0, self.len-1)
@@ -266,6 +268,7 @@ class FiberWindow2d(QtWidgets.QWidget):
         hlayout1.addWidget(lab1)
         hlayout1.addWidget(self.frameNumberBox)
         hlayout1.addWidget(self.doneButton)
+        hlayout1.addWidget(self.saveButton) # adding saveButton
 
         self.plot = pg.PlotWidget()
         self.image = ImageClick(image=self.getImage())
@@ -289,6 +292,8 @@ class FiberWindow2d(QtWidgets.QWidget):
 
         self.scrollBar.valueChanged.connect(self.setFrame)
 
+        self.saveButton.clicked.connect(self.saveVal) # signal when saveButton clicked
+
         self.doneButton.clicked.connect(self.close)
 
         self.radonWnd = RadonWindow(self.getImage(), self.image)
@@ -303,6 +308,44 @@ class FiberWindow2d(QtWidgets.QWidget):
     def setFrame(self, frame: int) -> None:
         self.curFrame = frame
         self.updateImage()
+
+    def saveVal(self):
+         for roi in self.ROIs:
+            logging.debug(roi.__dict__)
+            pos = roi.pos() # grab the outerleft point
+            sz = roi.size()
+            r = sz[0]/2
+
+            ctrx = pos[0] + r
+            ctry = pos[1] + r
+            frame = self.curFrame
+            axis = self.axis
+
+            angle = roi._lineAngle
+
+            # self.exportVal(axis, frame, ctrx, ctry, angle, pos, sz, r)
+            # logging.debug('ctrxctry: {},{}'.format(pos, ctrx, ctry))
+            # logging.debug('angle: {}'.format(angle))
+            # logging.debug('')
+    
+    def exportVal(self, axis, frame, ctrx, ctry, angle, pos, sz, r):
+        ## set up points based on axis (x, y, z) ##
+        if axis == "yz":
+            points = [frame, ctrx, ctry]
+        elif axis == "xz":
+            points = [ctrx, frame, ctry]
+        elif axis == "xy":
+            points = [ctrx, ctrx, frame]
+        
+        entry = [points, angle, frame, pos[0], pos[1], sz, r]
+        logging.debug(entry)
+
+        ## export to csv ##
+        ## csv files will contain [[frame], [x,y,z coordinates], [ROI angle], [circular coordinates]]
+        with open('output.csv', mode='w') as output_file:
+            wr = csv.writer(output_file, quoting=csv.QUOTE_MINIMAL)
+            for row in entry:
+                wr.writerow(row)
 
     def updateImage(self):
         self.image.setImage(self.getImage())
@@ -325,7 +368,7 @@ class FiberWindow2d(QtWidgets.QWidget):
         self.radonWnd.updateROI(roi1)
 
         self.ROIs.append(roi1)
-
+    
     def roiClicked(self, roi):
         logging.debug("ROI: {}".format(roi))
 
@@ -362,8 +405,8 @@ def main():
 
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
-
-    fw = FiberWindow2d(datafile='/Users/etytel01/Documents/Fibers/Drerio4.h5', axis='yz')
+    
+    fw = FiberWindow2d(datafile='/Users/liu81365/Desktop/Research/fibers/fibertracker/Drerio4.h5', axis='yz')
     fw.show()
 
     return app.exec_()
