@@ -1,5 +1,6 @@
 from ast import And
 import os, sys
+from turtle import position
 from PyQt5 import QtGui, QtCore, QtWidgets
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore    import *
@@ -13,22 +14,26 @@ from copy import copy
 import pyqtgraph as pg
 from scipy import interpolate
 from matplotlib import pyplot as plt
-# from matplotlib import mplot3d
 
 SETTINGS_FILE = "fibertracker.ini"
 
 pg.setConfigOption('background', 'w')
 pg.setConfigOption('foreground', 'k')
 
-class ImageCoord(pg.CircleROI):
+class ImageCoord(pg.ROI):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
         pos = self.pos()
+        size = self.size()
+        sizex = size[0]
+        sizey = size[1]
         ctrx = pos[0]
         ctry = pos[1]
+        print("pos: ", pos)
+        print("size: ", size)
 
-        self.line = pg.PlotDataItem(x=[ctrx], y=[ctry], color='g')
+        self.line = pg.PlotDataItem(x=[ctrx], y=[ctry], pen='g', symbol='x')
 
     def addToPlot(self, plot):
         plot.addItem(self)
@@ -153,7 +158,7 @@ class MainWindow(QtWidgets.QWidget):
         print("in double click")  
         pos = np.array(ev.pos())
 
-        coord = ImageCoord(pos=pos, size=(1.000000, 1.000000), 
+        coord = ImageCoord(pos=pos, size=(15.000000, 15.000000), 
                 removable=True, rotatable=False, resizable=False, movable=False)
         coord.addToPlot(self.plot)
         self.saveCoord(pos)
@@ -165,13 +170,16 @@ class MainWindow(QtWidgets.QWidget):
             self.coordArr.append([pos[0], self.curFrame, pos[1]])
         elif self.axis.lower() == 'xy':
             self.coordArr.append([pos[0], pos[1], self.curFrame])
-        print(self.coordArr)
     
     def interpolate(self):
+        idx = np.argsort(self.sortArr())
+        # self.coordArr = np.array(self.coordArr)[idx.astype(int)]
         print(self.coordArr)
+
         x_arr = []
         y_arr = []
         z_arr = []
+        
         for point in self.coordArr:
             x_arr.append(point[0])
             y_arr.append(point[1])
@@ -181,41 +189,63 @@ class MainWindow(QtWidgets.QWidget):
         y_arr = np.array(y_arr)
         z_arr = np.array(z_arr)
 
-        # need to sort array
-
         dx = x_arr[1:] - x_arr[:-1]
         dy = y_arr[1:] - y_arr[:-1]
         dz = z_arr[1:] - z_arr[:-1]
-        ds = np.sqrt(dx**2 + dy**2 + dz**2)
+        ds = np.sqrt(dx**2 + dy**2 + dz**2) 
 
-        s = np.insert(np.cumsum(ds), 0, 0)
+        s = np.insert(np.cumsum(ds), 0, 0) # arc length
         spx = interpolate.UnivariateSpline(s, x_arr)
         spy = interpolate.UnivariateSpline(s, y_arr)
         spz = interpolate.UnivariateSpline(s, z_arr)
 
         s1 = np.linspace(s[0], s[-1], 20)
-        xs = spx(s1)
+        xs = spx(s1) # function x(s) that gives point 
         ys = spy(s1)
         zs = spz(s1)
 
-        print(xs)
-        print(ys)
-        print(zs)
+        dxs = spx.derivative()(s1)
+        dys = spy.derivative()(s1)
+        dzs = spz.derivative()(s1)
+        print(dxs)
+        print(dys)
+        print(dzs)
 
+        #%%
+        # fig = plt.figure()
+        # ax = plt.axes(projection = '3d')
+        # ax.scatter(x_arr, y_arr, z_arr)
+        # ax.plot(xs, ys, zs)
+        # ax.set_xlabel('X-axis', fontweight ='bold')
+        # ax.set_ylabel('Y-axis', fontweight ='bold')
+        # ax.set_zlabel('Z-axis', fontweight ='bold')
+        # plt.show()
         # %%
-        fig = plt.figure()
-        ax = plt.axes(projection = '3d') 
-        ax.scatter(x_arr, y_arr, z_arr)
-        ax.set_xlabel('X-axis', fontweight ='bold')
-        ax.set_ylabel('Y-axis', fontweight ='bold')
-        ax.set_zlabel('Z-axis', fontweight ='bold')
-        plt.show()
 
-        fig = plt.figure()
-        ax = plt.axes(projection = '3d')
-        ax.scatter(x_arr, y_arr, z_arr)
-        ax.plot(xs, ys, zs)
-        ax.legend()
+        print(spx)
+        print(spy)
+        print(spz)
+
+    def sortArr(self, metric='euclidean'):
+        aa = np.asarray(self.coordArr)
+        bb = np.atleast_2d(np.array([0,0,0]))
+        a_dim = aa.ndim
+        b_dim = bb.ndim
+
+        if a_dim == 1:
+            aa = aa.reshape(1, 1, aa.shape[0])
+        if a_dim >= 2:
+            aa = aa.reshape(np.prod(aa.shape[:-1]), 1, aa.shape[-1])
+        if b_dim > 2:
+            bb = bb.reshape(np.prod(bb.shape[:-1]), bb.shape[-1])
+
+        diff = aa - bb
+        dist_arr = np.einsum('ijk,ijk->ij', diff, diff)
+        if metric[:1] == 'e':
+            dist_arr = np.sqrt(dist_arr)
+        dist_arr = np.squeeze(dist_arr)
+        
+        return dist_arr
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
