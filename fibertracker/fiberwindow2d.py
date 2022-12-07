@@ -406,7 +406,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     
-    fw = FiberWindow2d(datafile='/Users/liu81365/Desktop/Research/fibers/fibertracker/Drerio4.h5', axis='yz')
+    fw = FiberWindow2d(datafile='/Users/etytel01/Documents/Fibers/Drerio4.h5', axis='yz')
     fw.show()
 
     return app.exec_()

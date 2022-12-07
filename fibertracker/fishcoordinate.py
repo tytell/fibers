@@ -86,7 +86,9 @@ class SubWindow(QtWidgets.QWidget):
         self.shape = np.array(self.shape0)[self.axisorder][:2]
         self.len = self.shape0[self.axisorder[2]]
 
-        self.curFrame = 0
+        self.curPlane = 0
+
+        self.getArbitraryPlanes()
 
         self.initUI()
         self.readSettings()
@@ -95,19 +97,17 @@ class SubWindow(QtWidgets.QWidget):
     def initUI(self):
         self.setWindowTitle("1: Fish Coordiate System")
 
-        self.getArbitraryPlane()
-
         self.scrollBar = QtWidgets.QScrollBar(orientation=QtCore.Qt.Horizontal)
-        self.scrollBar.setRange(0, self.len-1)
-        self.scrollBar.setValue(self.curFrame)
+        self.scrollBar.setRange(0, self.coordArr.shape[0]-1)
+        self.scrollBar.setValue(self.curPlane)
         self.scrollBar.setSizePolicy(QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                                            QtWidgets.QSizePolicy.Fixed))
 
         self.frameNumberBox = QtWidgets.QSpinBox()
-        self.frameNumberBox.setRange(0, self.len-1)
+        self.frameNumberBox.setRange(0, self.coordArr.shape[0]-1)
 
-        self.frameNumberBox.setValue(self.curFrame)
-        lab1 = QtWidgets.QLabel("&Frame number:")
+        self.frameNumberBox.setValue(self.curPlane)
+        lab1 = QtWidgets.QLabel("&Plane number:")
         lab1.setBuddy(self.frameNumberBox)
         lab1.setAlignment(QtCore.Qt.AlignRight)
 
@@ -117,7 +117,7 @@ class SubWindow(QtWidgets.QWidget):
         hlayout1.addWidget(self.frameNumberBox)
 
         self.plot = pg.PlotWidget()
-        self.image = ImageClick(image=self.getImage())
+        self.image = ImageClick(image=self.vals[0,:,:])
         self.image.sigDoubleClick.connect(self.doubleClick) 
         self.plot.addItem(self.image)
 
@@ -131,9 +131,9 @@ class SubWindow(QtWidgets.QWidget):
         self.setLayout(vlayout1)
 
         # slots
-        # self.frameNumberBox.valueChanged.connect(self.scrollBar.setValue)
-        # self.scrollBar.valueChanged.connect(self.frameNumberBox.setValue)
-        # self.scrollBar.valueChanged.connect(self.setFrame)
+        self.frameNumberBox.valueChanged.connect(self.scrollBar.setValue)
+        self.scrollBar.valueChanged.connect(self.frameNumberBox.setValue)
+        self.scrollBar.valueChanged.connect(self.setPlane)
     
     def readSettings(self):
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
@@ -158,14 +158,7 @@ class SubWindow(QtWidgets.QWidget):
         # self.sw.close()
         event.accept()
 
-    def getImage(self):
-        ind = [slice(None), slice(None), slice(None)]
-        ind[self.axisorder[-1]] = self.curFrame
-        ind = tuple(ind)
-
-        return self.data[ind]
-
-    def getArbitraryPlane(self, range=[-200, 200]):
+    def getArbitraryPlanes(self, range=[-50, 50]):
         i1 = np.arange(range[0], range[1])
         j1 = np.arange(range[0], range[1])
         [i,j] = np.meshgrid(i1, j1)
@@ -173,7 +166,7 @@ class SubWindow(QtWidgets.QWidget):
         # obtain plane coordinates
         for k, arr in enumerate(self.coordArr):
             ctr = arr
-            m = self.N[k]
+            m = self.M[k]
             n = self.N[k]
             
             self.planeCoords.append(m[np.newaxis, np.newaxis, :] * i[:, :, np.newaxis] + \
@@ -183,27 +176,24 @@ class SubWindow(QtWidgets.QWidget):
         self.planeCoords = np.round(self.planeCoords).astype(int)
 
         # pull intensity values to display image in transverse plane
-        vals = np.zeros_like(self.planeCoords)
+        vals = np.zeros(self.planeCoords.shape[:-1])
 
         for pnum, plane in enumerate(self.planeCoords):
             for i0, row in enumerate(plane):
                 for j0, pt in enumerate(row):
                     if (np.all(pt >= 0) and np.all(pt < self.data.shape)):
-                        print('in range!')
-                        print(i0)
                         # pull out the value and put it in the right place in the vals matrix
                         vals[pnum, i0, j0] = self.data[pt[0], pt[1], pt[2]]
         print('done')
         ## ERROR HERE. IndexError: tuple index out of range ##
-        return vals
+        self.vals = vals
 
-    def setFrame(self, frame: int) -> None:
-        self.curFrame = frame
-        self.updateImage()
+    def setPlane(self, pnum: int) -> None:
+        self.curPlane = pnum
+        self.updateImage(self.curPlane)
     
-    def updateImage(self):
-        val = self.getArbitraryPlane()
-        self.image.setImage(val)
+    def updateImage(self, pnum = 0):
+        self.image.setImage(self.vals[pnum, :, :])
         # self.image.setImage(self.getImage())
         # self.sw.updateImage(self.getImage())
 
@@ -298,9 +288,6 @@ class MainWindow(QtWidgets.QWidget):
         self.frameNumberBox.valueChanged.connect(self.scrollBar.setValue)
         self.scrollBar.valueChanged.connect(self.frameNumberBox.setValue)
         self.scrollBar.valueChanged.connect(self.setFrame)
-
-        self.sw = SubWindow(self.datafile, self.coordArr, self.M, self.N, self.axis)
-        self.sw.show()
     
     def readSettings(self):
         settings = QtCore.QSettings(SETTINGS_FILE, QtCore.QSettings.IniFormat)
@@ -418,6 +405,10 @@ class MainWindow(QtWidgets.QWidget):
         # ax.set_zlabel('Z-axis', fontweight ='bold')
         # plt.show()
         # # %%
+
+        self.sw = SubWindow(self.datafile, self.coordArr, self.M, self.N, self.axis)
+        self.sw.show()
+
     
     def generatePPlane(self, t):
         t = t / np.linalg.norm(t)
@@ -468,7 +459,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
 
-    df = '/Users/jenniferliu/Downloads/Research/fibers/fibertracker/Drerio_6.h5'
+    df = '/Users/etytel01/Documents/Fibers/Drerio_6.h5'
     ax = 'xy'
     
     fw = MainWindow(datafile=df, axis=ax)
